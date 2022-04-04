@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
 """ DESCRIPTION """
-#In rucio config (so that cms regexes can be used)
-#[policy]
-#schema = cms
-
 import os
 import sys
 import ssl
@@ -226,10 +222,7 @@ class CacheWorker():
                 cInfo['fOk'] = False
                 raise XrdPfcException("%s file does not exist." % cInfo['sysFile'])
             if cInfo['fOk']:
-                # TODO: This is NEW and build locally! ETA to be released in XRootD 5.4
-                # before this release, xrootd is not able to print meta info in JSON format
-                # Fix: https://github.com/xrootd/xrootd/pull/1530
-                stdOut, _ = self.osCmd('/opt/xrootd/bin/xrdpfc_print -j %s' % cInfoFile)
+                stdOut, _ = self.osCmd('xrdpfc_print -j %s' % cInfoFile)
                 cInfo.update(json.loads(stdOut))
                 for key in ['state_complete', 'state_percentage', 'file_size']:
                     if key not in cInfo.keys():
@@ -321,8 +314,32 @@ class CacheWorker():
 
     def executeDelete(self, action='delete_replicas'):
         """ Prepares dict for delete_replicas action and
-            report to AMQ Proxy Server. """
-        raise XCacheReportException("Delete replicas not supported.")
+            report to AMQ Proxy Server.
+            P.S. THIS FUNCTION IS NOT CALLED. Need test call from command line"""
+        totalFiles = 0
+        scandir = "/%s/%s" % (self.args.rootdir.strip('/'), self.args.onlyfilesfromdir.strip('/'))
+        self.logger.info("Looping on %s dir and checking all files, cinfo", scandir)
+        for root, _dirs, files in os.walk(scandir):
+            for fname in files:
+                if fname.endswith(".cinfo"):
+                    cinfoFile = os.path.join(root, fname)
+                    # cInfo - loaded cInfo file output (dict)
+                    cInfo = self.getFileInfo(cinfoFile)
+                    fInfo = self.fileOut.setdefault(cInfo['lfn'], cInfo)
+                    fInfo['bytes'] = fInfo['file_size']
+                    fInfo['adler32'], fInfo['metadata'] = '00000001', {'adler32': '00000001', 'bytes': fInfo['bytes']}
+                    totalFiles += 1
+                    if len(self.fileOut) >= int(self.args.fileperreport):
+                        self.logger.info('Reached %s files per report. Reporting to AMQ Proxy.', self.args.fileperreport)
+                        self.reportToAMQProxy(action)
+                        self.allfiles.update(self.fileOut)
+                        self.fileOut = {}
+        if self.fileOut:
+            self.logger.info('Reporting remaining files from last scan. Remaining files to report: %s', len(self.fileOut))
+            self.reportToAMQProxy(action)
+            self.allfiles.update(self.fileOut)
+            self.fileOut = {}
+        self.logger.info('Finished scan of all files. Total Reported to Rucio: %s', len(self.allfiles))
 
     def executeUpdate(self, action='update_replicas'):
         """ Prepares dict for update_replicas action and
@@ -400,12 +417,12 @@ def get_parser():
     oparser.add_argument('--certificate', dest='ssl_cert_file', default=config_get('messaging-cache', 'ssl_cert_file', False, os.environ['X509_USER_PROXY']), help='Certificate file. Default: X509_USER_PROXY')
     oparser.add_argument('--certificate-key', dest='ssl_key_file', default=config_get('messaging-cache', 'ssl_key_file', False, os.environ['X509_USER_PROXY']), help='Certificate key file. Default: X509_USER_PROXY')
     oparser.add_argument('--dry-run', dest='dryrun', default=config_get_bool('messaging-cache', 'dryrun', False), help="Dry Run. No reporting to endpoint. Default: False", action='store_true')
-    oparser.add_argument('--adler', dest='adler', default=config_get('messaging-cache', 'adler', 'local'), help="Adler calculation: local | rucio. Default: local")
-    oparser.add_argument('--root-dir', dest='rootdir', default=config_get('messaging-cache', 'rootdir'), help="XCache Root Directory")
+    oparser.add_argument('--adler', dest='adler', default=config_get('messaging-cache', 'adler', False, 'local'), help="Adler calculation: local | rucio. Default: local")
+    oparser.add_argument('--root-dir', dest='rootdir', default=config_get('messaging-cache', 'rootdir', False), help="XCache Root Directory")
     oparser.add_argument('--only-files-from-dir', dest='onlyfilesfromdir', default=config_get('messaging-cache', 'onlyfilesfromdir', False, '/'), help="Report only specific dir files")
     oparser.add_argument('--rse', dest='rse', default=None, help="Volatile RSE Name")
-    oparser.add_argument('--files-per-report', dest='fileperreport', default=config_get_int('messaging-cache', 'fileperreport', 100), help="How many files to group in a single report. Default: 100")
-    oparser.add_argument('--lifetime', dest='lifetime', default=config_get_int('messaging-cache', 'lifetime', 604800), help="Lifetime of a file. Default: 604800 seconds (1 week)")
+    oparser.add_argument('--files-per-report', dest='fileperreport', default=config_get_int('messaging-cache', 'fileperreport', False, 100), help="How many files to group in a single report. Default: 100")
+    oparser.add_argument('--lifetime', dest='lifetime', default=config_get_int('messaging-cache', 'lifetime', False, 604800), help="Lifetime of a file. Default: 604800 seconds (1 week)")
     oparser.add_argument('--debug', dest='debug', default=config_get('messaging-cache', 'debug', False, 'INFO'), help="Debug mode. Available options: FATAL,ERROR,WARNING,INFO,DEBUG. Default: INFO")
     return oparser
 
@@ -413,6 +430,7 @@ def main(args, inLogger):
     """ Main call """
     scanner = CacheWorker(args, inLogger)
     scanner.executeAdd()
+    #scanner.executeDelete()
 
 if __name__ == "__main__":
     parser = get_parser()
