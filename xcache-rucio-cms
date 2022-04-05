@@ -9,6 +9,7 @@ import argparse
 import subprocess
 import http.client
 import logging
+import logging.handlers
 
 from jsonschema import validate
 
@@ -115,7 +116,7 @@ class RucioAPI():
             validate(payload, get_schema_value('CACHE_DELETE_REPLICAS'))
 
 # =================================================================
-#                     Cache dir listing worker
+#                     Logging definition
 # =================================================================
 LOG_LEVELS = {'FATAL': logging.FATAL,
               'ERROR': logging.ERROR,
@@ -123,14 +124,16 @@ LOG_LEVELS = {'FATAL': logging.FATAL,
               'INFO': logging.INFO,
               'DEBUG': logging.DEBUG}
 
-def getLogger(logLevel='DEBUG', streamLogging=False, logFile='api.log', rotate='1d', backups=5):
+def getLogger(logLevel='DEBUG', streamLogging=False, logFile='/var/log/xcache/reporter.log', rotate='d', interval=1, backups=5):
     """Get Stream Logger."""
+    logpath = os.path.dirname(logFile)
+    os.makedirs(logpath, exist_ok=True)
     logger = logging.getLogger()
     handler = None
     if streamLogging:
         handler = logging.StreamHandler()
     else:
-        handler = logging.handlers.TimedRotatingFileHandler(logFile, when=rotate, backupCount=backups)
+        handler = logging.handlers.TimedRotatingFileHandler(logFile, when=rotate, interval=interval, backupCount=backups)
     formatter = logging.Formatter("%(asctime)s.%(msecs)03d - %(name)s - %(levelname)s - %(message)s",
                                   datefmt="%a, %d %b %Y %H:%M:%S")
     handler.setFormatter(formatter)
@@ -139,11 +142,19 @@ def getLogger(logLevel='DEBUG', streamLogging=False, logFile='api.log', rotate='
     logger.setLevel(LOG_LEVELS[logLevel])
     return logger
 
+http_client_logger = logging.getLogger("http.client")
+def print_to_log(*args):
+    """ http client lib does basic print. This is overwritten to log to logging handler """
+    http_client_logger.debug(" ".join(args))
+
+# =================================================================
+#                     Cache dir listing worker
+# =================================================================
 
 class CacheWorker():
     """ Cache Scanner, Reporter """
     def __init__(self, args, logger=None):
-        self.logger = logger if logger else getLogger(args.debug, True)
+        self.logger = logger if logger else getLogger(logLevel=args.debug, streamLogging=args.logtostdout)
         self.args = args
         self.rucio = RucioAPI(args, self.logger)
         self.fileOut = {}
@@ -152,6 +163,7 @@ class CacheWorker():
         if self.args.debug == 'DEBUG' and not self.args.dryrun:
             http.client.HTTPConnection.debuglevel = 1
             http.client.HTTPSConnection.debuglevel = 1
+            http.client.print = print_to_log
 
     def https_post(self, data):
         """ Post to AMQ Proxy"""
@@ -424,6 +436,7 @@ def get_parser():
     oparser.add_argument('--files-per-report', dest='fileperreport', default=config_get_int('messaging-cache', 'fileperreport', False, 100), help="How many files to group in a single report. Default: 100")
     oparser.add_argument('--lifetime', dest='lifetime', default=config_get_int('messaging-cache', 'lifetime', False, 604800), help="Lifetime of a file. Default: 604800 seconds (1 week)")
     oparser.add_argument('--debug', dest='debug', default=config_get('messaging-cache', 'debug', False, 'INFO'), help="Debug mode. Available options: FATAL,ERROR,WARNING,INFO,DEBUG. Default: INFO")
+    oparser.add_argument('--logtostdout', dest='logtostdout', default=config_get_bool('messaging-cache', 'logtostdout', False, False), help="Log to stdout. Available options: True, False. Default: Logged to /var/log/xcache/reporter.log. Rotates log files every day, max 5 backups", action='store_true')
     return oparser
 
 def main(args, inLogger):
@@ -439,5 +452,5 @@ if __name__ == "__main__":
 
     inargs = parser.parse_args(sys.argv[1:])
     validate_args(inargs)
-    streamLogger = getLogger(logLevel=inargs.debug, streamLogging=True)
+    streamLogger = getLogger(logLevel=inargs.debug, streamLogging=inargs.logtostdout)
     main(inargs, streamLogger)
