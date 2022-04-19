@@ -17,7 +17,7 @@ export X509_USER_PROXY="/etc/grid-security/x509-$RUCIO_ACCOUNT"
 while true
 do
     #$MAINDIR/xcache-rucio-cms --adler rucio --root-dir /xcache-root --rse T3_US_OSG_SoCal_Cache --debug DEBUG --only-files-from-dir /store/data/Run2016F/MuonEG/MINIAOD/HIPM_UL2016_MiniAODv2-v2/
-    $MAINDIR/xcache-rucio-cms --adler rucio --root-dir /xcache-root --rse T3_US_OSG_SoCal_Cache --debug DEBUG
+    $MAINDIR/xcache-rucio-cms --adler rucio --root-dir /xcache-root --rse T3_US_OSG_SoCal_Cache --debug DEBUG --lifetime 600
     sleep 360
 done
 
