@@ -187,7 +187,7 @@ class CacheWorker():
 
     def reportToAMQProxy(self, action):
         """ Report info to AMQ Proxy """
-        payload = {'files': [], 'rse': self.args.rse, 'lifetime': self.args.lifetime, 'operation': action}
+        payload = {'files': [], 'rse': self.args.rse, 'lifetime': int(self.args.lifetime), 'operation': action}
         out = self.rucio.validate_files(self.fileOut)
         for item in out['GOOD']:
             fInfo = {'scope': self.args.vo, 'name': item['lfn'],
